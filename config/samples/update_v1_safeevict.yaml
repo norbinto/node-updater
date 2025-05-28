@@ -1,0 +1,20 @@
+apiVersion: update.norbinto/v1
+kind: SafeEvict
+metadata:
+  labels:
+    app.kubernetes.io/name: node-updater
+    app.kubernetes.io/managed-by: kustomize
+  name: agentssafeevict
+spec:
+  labelSelector:
+    node-updater-safe-to-evict: "false"
+  nodepools:
+    - system
+    - agent
+  namespaces:
+    - agents
+  lastLogLines: 
+    - "Listening for Jobs\n"
+    - "Agent reconnected.\n"
+  baseForBackupPoolName: agent
+  

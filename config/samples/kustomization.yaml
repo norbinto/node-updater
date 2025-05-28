@@ -1,0 +1,4 @@
+## Append samples of your project ##
+resources:
+- update_v1_safeevict.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples
