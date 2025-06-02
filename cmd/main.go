@@ -32,6 +32,7 @@ import (
 	"go.uber.org/zap/zapcore"
 	"k8s.io/client-go/kubernetes"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -83,6 +84,7 @@ func main() {
 	var errorReconcileTime int
 	var successReconcileTime int
 	var upgradeFrequency int
+	var runInVsCode bool
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -103,10 +105,28 @@ func main() {
 	flag.IntVar(&errorReconcileTime, "error-reconcile-time", 10, "Default value is 10 seconds. The time to wait before retrying a failed reconcile.")
 	flag.IntVar(&successReconcileTime, "success-reconcile-time", 10, "Default value is 10 seconds. The time to wait before retrying a successful reconcile.")
 	flag.IntVar(&upgradeFrequency, "upgrade-frequency", 3600, "Default value is 3600 seconds(1 hour). The time to wait before checking for a new version.")
+	flag.BoolVar(&runInVsCode, "run-in-vs-code", false, "If set, the controller will run in VS Code.")
+
+	// todo: like in keda we should use strings instead of numbers for log levels
+	var logLevel int
+	flag.IntVar(&logLevel, "log-level", 1, "The log level for the controller. 0=debug, 1=info, 2=warn, 3=error")
+	var zapLevel zapcore.Level
+	switch logLevel {
+	case 0:
+		zapLevel = zapcore.DebugLevel
+	case 1:
+		zapLevel = zapcore.InfoLevel
+	case 2:
+		zapLevel = zapcore.WarnLevel
+	case 3:
+		zapLevel = zapcore.ErrorLevel
+	default:
+		zapLevel = zapcore.InfoLevel
+	}
 
 	opts := zap.Options{
 		Development: true,
-		Level:       zapcore.InfoLevel,
+		Level:       zapLevel,
 	}
 
 	// Create a context for the application
@@ -233,16 +253,23 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Get kubeconfig path
-	kubeconfig := os.Getenv("KUBECONFIG")
-	if kubeconfig == "" {
-		kubeconfig = clientcmd.RecommendedHomeFile
-	}
-
-	kubeConfig, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
-	if err != nil {
-		setupLog.Error(err, "unable to get kubeconfig")
-		os.Exit(1)
+	var kubeConfig *rest.Config
+	if runInVsCode {
+		kubeconfigPath := os.Getenv("KUBECONFIG")
+		if kubeconfigPath == "" {
+			kubeconfigPath = clientcmd.RecommendedHomeFile
+		}
+		kubeConfig, err = clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+		if err != nil {
+			setupLog.Error(err, "unable to build kubeconfig from flags")
+			os.Exit(1)
+		}
+	} else {
+		kubeConfig, err = rest.InClusterConfig()
+		if err != nil {
+			setupLog.Error(err, "unable to build in-cluster kubeconfig")
+			os.Exit(1)
+		}
 	}
 
 	// Initialize KubeClient

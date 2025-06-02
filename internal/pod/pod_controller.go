@@ -55,7 +55,7 @@ func (c *PodController) EvictIdlePods(ctx context.Context, pods []corev1.Pod) er
 			return err
 		}
 		c.logger.Debug("Agent removed from Azure DevOps", zap.String("podName", pod.Name), zap.String("poolName", poolName))
-		c.logger.Debug("Starting to evict pod", zap.String("podName", pod.Name), zap.String("namespace", pod.Namespace))
+		c.logger.Info("Starting to evict pod", zap.String("podName", pod.Name), zap.String("namespace", pod.Namespace))
 
 		if err := c.jobController.KillJobByPod(ctx, pod); err != nil {
 			c.logger.Error("Failed to kill job associated with pod", zap.Error(err), zap.String("podName", pod.Name), zap.String("namespace", pod.Namespace))
