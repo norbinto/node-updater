@@ -27,6 +27,7 @@ import (
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v2"
 	"go.uber.org/zap/zapcore"
@@ -48,6 +49,7 @@ import (
 
 	updatev1 "norbinto/node-updater/api/v1"
 	"norbinto/node-updater/internal/appconfig"
+	"norbinto/node-updater/internal/azure"
 	"norbinto/node-updater/internal/azuredevops"
 	configmap "norbinto/node-updater/internal/configmap" // Import the configmap package
 	"norbinto/node-updater/internal/controller"
@@ -254,6 +256,8 @@ func main() {
 	}
 
 	var kubeConfig *rest.Config
+	var azureCred azcore.TokenCredential
+	var subscriptionID, clusterResourceGroup, clusterName string
 	if runInVsCode {
 		kubeconfigPath := os.Getenv("KUBECONFIG")
 		if kubeconfigPath == "" {
@@ -264,12 +268,38 @@ func main() {
 			setupLog.Error(err, "unable to build kubeconfig from flags")
 			os.Exit(1)
 		}
+		azureCred, err = azidentity.NewDefaultAzureCredential(nil)
+		if err != nil {
+			setupLog.Error(err, "unable to create Azure credentials")
+			os.Exit(1)
+		}
+		subscriptionID = os.Getenv("AZURE_SUBSCRIPTION_ID")
+		clusterResourceGroup = os.Getenv("AZURE_CLUSTER_RESOURCE_GROUP")
+		clusterName = os.Getenv("AZURE_CLUSTER_NAME")
+		setupLog.Info("Running in VS Code mode", "subscriptionID", subscriptionID, "clusterResourceGroup", clusterResourceGroup, "clusterName", clusterName)
 	} else {
 		kubeConfig, err = rest.InClusterConfig()
 		if err != nil {
 			setupLog.Error(err, "unable to build in-cluster kubeconfig")
 			os.Exit(1)
 		}
+		credOptions := azidentity.ManagedIdentityCredentialOptions{
+			ID: azidentity.ClientID(os.Getenv("AZURE_CLIENT_ID")),
+		}
+
+		azureCred, err = azidentity.NewManagedIdentityCredential(&credOptions)
+		if err != nil {
+			setupLog.Error(err, "unable to get managed identity credentials")
+			os.Exit(1)
+		}
+
+		azureController := azure.NewAzureController(&http.Client{}, logger.Named("azure"))
+		subscriptionID, clusterResourceGroup, clusterName, err = azureController.GetClusterInfo()
+		if err != nil {
+			setupLog.Error(err, "unable to get subsription id")
+			os.Exit(1)
+		}
+		setupLog.Info("Using Azure subscription ID", "subscriptionID", subscriptionID, "clusterResourceGroup", clusterResourceGroup, "clusterName", clusterName)
 	}
 
 	// Initialize KubeClient
@@ -279,18 +309,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	azureCred, err := azidentity.NewDefaultAzureCredential(nil)
-	if err != nil {
-		setupLog.Error(err, "unable to create Azure credentials")
-		os.Exit(1)
-	}
-
-	containerClient, err := armcontainerservice.NewAgentPoolsClient(os.Getenv("AZURE_SUBSCRIPTION_ID"), azureCred, nil)
+	containerClient, err := armcontainerservice.NewAgentPoolsClient(subscriptionID, azureCred, nil)
 	if err != nil {
 		setupLog.Error(err, "unable to create container service client")
 		os.Exit(1)
 	}
-
 	if err = (&controller.SafeEvictReconciler{
 		Client:     mgr.GetClient(),
 		Scheme:     mgr.GetScheme(),
@@ -304,7 +327,7 @@ func main() {
 			logger.Named("pod")),
 		NodepoolController: nodepool.NewNodePoolController(
 			kubeClient,
-			containerClient,
+			containerClient, subscriptionID, clusterResourceGroup, clusterName,
 			logger.Named("nodepool")),
 		ConfigmapController: configmap.NewConfigMapController(
 			kubeClient,

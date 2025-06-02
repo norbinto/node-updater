@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 
 	"go.uber.org/zap"
 
@@ -20,16 +19,22 @@ import (
 )
 
 type NodePoolController struct {
-	kubeClient      kubernetes.Interface
-	agentPoolClient AgentPoolClientInterface
-	logger          *zap.Logger
+	kubeClient           kubernetes.Interface
+	agentPoolClient      AgentPoolClientInterface
+	subscriptionID       string
+	clusterResourceGroup string
+	clusterName          string
+	logger               *zap.Logger
 }
 
-func NewNodePoolController(kubeClient kubernetes.Interface, agentPoolClient AgentPoolClientInterface, logger *zap.Logger) *NodePoolController {
+func NewNodePoolController(kubeClient kubernetes.Interface, agentPoolClient AgentPoolClientInterface, subscriptionID, clusterResourceGroup, clusterName string, logger *zap.Logger) *NodePoolController {
 	return &NodePoolController{
-		kubeClient:      kubeClient,
-		agentPoolClient: agentPoolClient,
-		logger:          logger,
+		kubeClient:           kubeClient,
+		agentPoolClient:      agentPoolClient,
+		subscriptionID:       subscriptionID,
+		clusterResourceGroup: clusterResourceGroup,
+		clusterName:          clusterName,
+		logger:               logger,
 	}
 }
 
@@ -100,7 +105,7 @@ func (c *NodePoolController) HasRunningStatefulPods(ctx context.Context, nodes [
 func (c *NodePoolController) GetNodePoolByName(ctx context.Context, nodePoolName string) (*armcontainerservice.AgentPool, error) {
 	// Get the node pool by name
 	c.logger.Debug(fmt.Sprintf("Retrieving node pool '%s'", nodePoolName))
-	nodePool, err := c.agentPoolClient.Get(ctx, os.Getenv("RESOURCE_GROUP"), os.Getenv("AKS_CLUSTER_NAME"), nodePoolName, nil)
+	nodePool, err := c.agentPoolClient.Get(ctx, c.clusterResourceGroup, c.clusterName, nodePoolName, nil)
 	if apierrors.IsNotFound(err) {
 		c.logger.Debug(fmt.Sprintf("Node pool '%s' not found", nodePoolName))
 		return nil, err
@@ -166,7 +171,7 @@ func (c *NodePoolController) getNodeImageVersions(ctx context.Context, nodePoolN
 func (c *NodePoolController) getNodePoolUpgradeProfile(ctx context.Context, nodePoolName string) (string, error) {
 
 	// Call the API to get the upgrade profile for the specified node pool
-	upgradeProfile, err := c.agentPoolClient.GetUpgradeProfile(ctx, os.Getenv("RESOURCE_GROUP"), os.Getenv("AKS_CLUSTER_NAME"), nodePoolName, nil)
+	upgradeProfile, err := c.agentPoolClient.GetUpgradeProfile(ctx, c.clusterResourceGroup, c.clusterName, nodePoolName, nil)
 	if err != nil {
 		c.logger.Error("Failed to get upgrade profile for node pool", zap.Error(err), zap.String("nodePoolName", nodePoolName))
 		return "", fmt.Errorf("unable to get upgrade profile for node pool '%s': %v", nodePoolName, err)
@@ -210,7 +215,7 @@ func (c *NodePoolController) CreateTemporaryNodePool(ctx context.Context, newNod
 	c.logger.Debug(fmt.Sprintf("Creating temporary node pool '%s' based on source node pool '%s'", newNodePoolName, sourceNodePoolName))
 
 	// Get the source node pool configuration
-	sourceNodePool, err := c.agentPoolClient.Get(ctx, os.Getenv("RESOURCE_GROUP"), os.Getenv("AKS_CLUSTER_NAME"), sourceNodePoolName, nil)
+	sourceNodePool, err := c.agentPoolClient.Get(ctx, c.clusterResourceGroup, c.clusterName, sourceNodePoolName, nil)
 	if err != nil {
 		c.logger.Error("Failed to get source node pool", zap.Error(err), zap.String("sourceNodePoolName", sourceNodePoolName))
 		return fmt.Errorf("unable to get source node pool '%s': %v", sourceNodePoolName, err)
@@ -240,7 +245,7 @@ func (c *NodePoolController) CreateTemporaryNodePool(ctx context.Context, newNod
 	}
 
 	// Create the new node pool
-	_, err = c.agentPoolClient.BeginCreateOrUpdate(ctx, os.Getenv("RESOURCE_GROUP"), os.Getenv("AKS_CLUSTER_NAME"), newNodePoolName, newNodePool, nil)
+	_, err = c.agentPoolClient.BeginCreateOrUpdate(ctx, c.clusterResourceGroup, c.clusterName, newNodePoolName, newNodePool, nil)
 	if err != nil {
 		c.logger.Error("Failed to create new node pool", zap.Error(err), zap.String("newNodePoolName", newNodePoolName))
 		return fmt.Errorf("failed to create new node pool '%s': %v", newNodePoolName, err)
@@ -253,7 +258,7 @@ func (c *NodePoolController) CreateTemporaryNodePool(ctx context.Context, newNod
 func (c *NodePoolController) GetNodePoolProvisioningState(ctx context.Context, nodePoolName string) (string, error) {
 	c.logger.Debug(fmt.Sprintf("Retrieving provisioning state for node pool '%s'", nodePoolName))
 	// Get the node pool details
-	nodePool, err := c.agentPoolClient.Get(ctx, os.Getenv("RESOURCE_GROUP"), os.Getenv("AKS_CLUSTER_NAME"), nodePoolName, nil)
+	nodePool, err := c.agentPoolClient.Get(ctx, c.clusterResourceGroup, c.clusterName, nodePoolName, nil)
 	if err != nil {
 		c.logger.Error("Error occurred while getting node pool", zap.Error(err), zap.String("nodePoolName", nodePoolName))
 		return "", fmt.Errorf("unable to get node pool '%s': %v", nodePoolName, err)
@@ -272,7 +277,7 @@ func (c *NodePoolController) GetNodePoolProvisioningState(ctx context.Context, n
 func (c *NodePoolController) NodePoolExists(ctx context.Context, nodePoolName string) (bool, error) {
 	c.logger.Debug(fmt.Sprintf("Checking if node pool '%s' exists", nodePoolName))
 	// Try to get the node pool
-	_, err := c.agentPoolClient.Get(ctx, os.Getenv("RESOURCE_GROUP"), os.Getenv("AKS_CLUSTER_NAME"), nodePoolName, nil)
+	_, err := c.agentPoolClient.Get(ctx, c.clusterResourceGroup, c.clusterName, nodePoolName, nil)
 	if err != nil {
 		// If the error indicates the node pool does not exist, return false
 		var responseErr *azcore.ResponseError
@@ -313,7 +318,7 @@ func (c *NodePoolController) UpgradeNodeImageVersion(ctx context.Context, nodepo
 	}
 	c.logger.Info(fmt.Sprintf("Node pool '%s' does not have the latest image version. Current: '%s', Latest: '%s'", *nodepool.Name, nodepoolNodeImageVersions[*nodepool.Name], nodepoolLatestImageVersions))
 	c.logger.Info(fmt.Sprintf("Initiating node image version upgrade for node pool '%s'", *nodepool.Name))
-	_, err = c.agentPoolClient.BeginUpgradeNodeImageVersion(ctx, os.Getenv("RESOURCE_GROUP"), os.Getenv("AKS_CLUSTER_NAME"), *nodepool.Name, nil)
+	_, err = c.agentPoolClient.BeginUpgradeNodeImageVersion(ctx, c.clusterResourceGroup, c.clusterName, *nodepool.Name, nil)
 	if err != nil {
 		c.logger.Error("Failed to initiate node image version upgrade for node pool", zap.Error(err), zap.String("nodePoolName", *nodepool.Name))
 		return fmt.Errorf("failed to upgrade node image version for node pool '%s': %v", *nodepool.Name, err)
@@ -347,7 +352,7 @@ func (c *NodePoolController) DisableAutoScaling(ctx context.Context, agentPools 
 
 		c.logger.Debug(fmt.Sprintf("Disabling autoscaling for agent pool '%s'", *agentPool.Name))
 		// Apply the update
-		_, err := c.agentPoolClient.BeginCreateOrUpdate(ctx, os.Getenv("RESOURCE_GROUP"), os.Getenv("AKS_CLUSTER_NAME"), *agentPool.Name, agentPool, nil)
+		_, err := c.agentPoolClient.BeginCreateOrUpdate(ctx, c.clusterResourceGroup, c.clusterName, *agentPool.Name, agentPool, nil)
 		if err != nil {
 			var responseErr *azcore.ResponseError
 			if errors.As(err, &responseErr) && responseErr.StatusCode == 409 {
@@ -367,7 +372,7 @@ func (c *NodePoolController) DisableAutoScaling(ctx context.Context, agentPools 
 func (c *NodePoolController) RemoveTemporaryNodePool(ctx context.Context, nodePoolName string) error {
 	// Delete the node pool
 	c.logger.Debug(fmt.Sprintf("Starting to delete node pool '%s'", nodePoolName))
-	_, err := c.agentPoolClient.BeginDelete(ctx, os.Getenv("RESOURCE_GROUP"), os.Getenv("AKS_CLUSTER_NAME"), nodePoolName, nil)
+	_, err := c.agentPoolClient.BeginDelete(ctx, c.clusterResourceGroup, c.clusterName, nodePoolName, nil)
 	if err != nil {
 		c.logger.Error("Failed to delete node pool", zap.Error(err), zap.String("nodePoolName", nodePoolName))
 		return fmt.Errorf("failed to delete node pool '%s': %v", nodePoolName, err)
@@ -459,7 +464,7 @@ func (c *NodePoolController) SetDefaultScaling(ctx context.Context, nodepool *ar
 	c.logger.Debug(fmt.Sprintf("Applying scaling configuration for node pool '%s'", *nodepool.Name))
 	// Apply the update
 
-	_, err = c.agentPoolClient.BeginCreateOrUpdate(ctx, os.Getenv("RESOURCE_GROUP"), os.Getenv("AKS_CLUSTER_NAME"), *nodepool.Name, *nodepool, nil)
+	_, err = c.agentPoolClient.BeginCreateOrUpdate(ctx, c.clusterResourceGroup, c.clusterName, *nodepool.Name, *nodepool, nil)
 	if err != nil {
 		var responseErr *azcore.ResponseError
 		if errors.As(err, &responseErr) && responseErr.StatusCode == 409 {
