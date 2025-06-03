@@ -49,6 +49,7 @@ import (
 
 	updatev1 "norbinto/node-updater/api/v1"
 	"norbinto/node-updater/internal/appconfig"
+	"norbinto/node-updater/internal/azure"
 	"norbinto/node-updater/internal/azuredevops"
 	configmap "norbinto/node-updater/internal/configmap" // Import the configmap package
 	"norbinto/node-updater/internal/controller"
@@ -277,6 +278,13 @@ func main() {
 		clusterName = os.Getenv("AZURE_CLUSTER_NAME")
 		setupLog.Info("Running in VS Code mode", "subscriptionID", subscriptionID, "clusterResourceGroup", clusterResourceGroup, "clusterName", clusterName)
 	} else {
+		//todo pass doers interface instead of https client
+		azureController := azure.NewAzureController(&http.Client{}, logger.Named("azure"))
+		subscriptionID, clusterResourceGroup, clusterName, err = azureController.GetClusterInfo()
+		if err != nil {
+			setupLog.Error(err, "unable to get subsription id")
+			os.Exit(1)
+		}
 		kubeConfig, err = rest.InClusterConfig()
 		if err != nil {
 			setupLog.Error(err, "unable to build in-cluster kubeconfig")
