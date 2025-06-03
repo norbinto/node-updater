@@ -49,7 +49,6 @@ import (
 
 	updatev1 "norbinto/node-updater/api/v1"
 	"norbinto/node-updater/internal/appconfig"
-	"norbinto/node-updater/internal/azure"
 	"norbinto/node-updater/internal/azuredevops"
 	configmap "norbinto/node-updater/internal/configmap" // Import the configmap package
 	"norbinto/node-updater/internal/controller"
@@ -283,23 +282,18 @@ func main() {
 			setupLog.Error(err, "unable to build in-cluster kubeconfig")
 			os.Exit(1)
 		}
-		credOptions := azidentity.ManagedIdentityCredentialOptions{
-			ID: azidentity.ClientID(os.Getenv("AZURE_CLIENT_ID")),
+		credOptions := azidentity.WorkloadIdentityCredentialOptions{
+			TokenFilePath: os.Getenv("AZURE_FEDERATED_TOKEN_FILE"),
+			ClientID:      os.Getenv("AZURE_CLIENT_ID"),
+			TenantID:      os.Getenv("AZURE_TENANT_ID"),
 		}
 
-		azureCred, err = azidentity.NewManagedIdentityCredential(&credOptions)
+		azureCred, err = azidentity.NewWorkloadIdentityCredential(&credOptions)
 		if err != nil {
-			setupLog.Error(err, "unable to get managed identity credentials")
+			setupLog.Error(err, "unable to create workload identity credentials")
 			os.Exit(1)
 		}
-
-		azureController := azure.NewAzureController(&http.Client{}, logger.Named("azure"))
-		subscriptionID, clusterResourceGroup, clusterName, err = azureController.GetClusterInfo()
-		if err != nil {
-			setupLog.Error(err, "unable to get subsription id")
-			os.Exit(1)
-		}
-		setupLog.Info("Using Azure subscription ID", "subscriptionID", subscriptionID, "clusterResourceGroup", clusterResourceGroup, "clusterName", clusterName)
+		setupLog.Info("Using Managed Identity (workload identity) federated credentials for authentication")
 	}
 
 	// Initialize KubeClient
@@ -309,7 +303,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	containerClient, err := armcontainerservice.NewAgentPoolsClient(subscriptionID, azureCred, nil)
+	agentPoolClient, err := armcontainerservice.NewAgentPoolsClient(subscriptionID, azureCred, nil)
 	if err != nil {
 		setupLog.Error(err, "unable to create container service client")
 		os.Exit(1)
@@ -327,7 +321,10 @@ func main() {
 			logger.Named("pod")),
 		NodepoolController: nodepool.NewNodePoolController(
 			kubeClient,
-			containerClient, subscriptionID, clusterResourceGroup, clusterName,
+			agentPoolClient,
+			subscriptionID,
+			clusterResourceGroup,
+			clusterName,
 			logger.Named("nodepool")),
 		ConfigmapController: configmap.NewConfigMapController(
 			kubeClient,

@@ -230,11 +230,11 @@ func (c *NodePoolController) CreateTemporaryNodePool(ctx context.Context, newNod
 	// Create a new node pool configuration based on the source node pool
 	newNodePool := armcontainerservice.AgentPool{
 		Properties: &armcontainerservice.ManagedClusterAgentPoolProfileProperties{
-			VMSize:              sourceNodePool.Properties.VMSize,
-			Count:               sourceNodePool.Properties.Count,
-			MinCount:            sourceNodePool.Properties.MinCount,
-			MaxCount:            sourceNodePool.Properties.MaxCount,
-			VnetSubnetID:        sourceNodePool.Properties.VnetSubnetID,
+			VMSize:   sourceNodePool.Properties.VMSize,
+			Count:    sourceNodePool.Properties.Count,
+			MinCount: sourceNodePool.Properties.MinCount,
+			MaxCount: sourceNodePool.Properties.MaxCount,
+			// VnetSubnetID:        sourceNodePool.Properties.VnetSubnetID,
 			Mode:                sourceNodePool.Properties.Mode,
 			EnableAutoScaling:   sourceNodePool.Properties.EnableAutoScaling,
 			OrchestratorVersion: sourceNodePool.Properties.OrchestratorVersion,
